@@ -1,0 +1,20 @@
+# 转发服务端使用专用 turntf 普通用户登录。
+turntf:
+  base_url: "http://127.0.0.1:8080"
+  request_timeout: "10s"
+  ping_interval: "30s"
+  credentials:
+    login_name: "port-forward-server"
+    password: {source: "plain", value: "replace-me"}
+
+# 每条规则只允许白名单中的 turntf 用户访问固定目标。
+rules:
+  - name: "ssh"
+    network: "tcp"
+    target: "127.0.0.1:22"
+    allowed_clients: [{node_id: 4096, user_id: 1025}]
+  - name: "dns"
+    network: "udp"
+    target: "127.0.0.1:53"
+    udp_idle_timeout: "2m"
+    allowed_clients: [{node_id: 4096, user_id: 1025}]

@@ -1,0 +1,54 @@
+syntax = "proto3";
+
+package turntf.portforward.v1;
+
+option go_package = "github.com/tursom/turntf-port-forward/internal/proto;proto";
+
+message TunnelEnvelope {
+  string protocol_version = 1;
+  bytes association_id = 2;
+
+  // UDP frames bind an association to the sender's turntf session.
+  SessionRef source_session = 8;
+
+  oneof body {
+    OpenRequest open_request = 3;
+    OpenResponse open_response = 4;
+    Data data = 5;
+    HalfClose half_close = 6;
+    Close close = 7;
+  }
+}
+
+message OpenRequest {
+  string rule = 1;
+  Network network = 2;
+  SessionRef source_session = 3;
+}
+
+message OpenResponse {
+  bool accepted = 1;
+  string code = 2;
+  string message = 3;
+}
+
+message Data {
+  bytes payload = 1;
+}
+
+message HalfClose {}
+
+message Close {
+  string code = 1;
+}
+
+message SessionRef {
+  int64 serving_node_id = 1;
+  string session_id = 2;
+}
+
+enum Network {
+  NETWORK_UNSPECIFIED = 0;
+  NETWORK_TCP = 1;
+  NETWORK_UDP = 2;
+}

@@ -1,0 +1,21 @@
+# 转发客户端使用自己的 turntf 普通用户登录。
+turntf:
+  base_url: "http://127.0.0.1:8080"
+  request_timeout: "10s"
+  ping_interval: "30s"
+  credentials:
+    login_name: "port-forward-client"
+    password: {source: "plain", value: "replace-me"}
+
+# 每条本地监听规则可选择不同的远端服务端用户和规则名。
+forwards:
+  - name: "local-ssh"
+    network: "tcp"
+    listen: "127.0.0.1:2222"
+    server_user: {node_id: 4096, user_id: 1026}
+    remote_rule: "ssh"
+  - name: "local-dns"
+    network: "udp"
+    listen: "127.0.0.1:5353"
+    server_user: {node_id: 8192, user_id: 1026}
+    remote_rule: "dns"
