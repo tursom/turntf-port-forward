@@ -1,0 +1,170 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  BINARY_NAME: turntf-port-forward
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Validate release tag
+        run: |
+          python3 - <<'PY'
+          import os
+          import re
+          import sys
+
+          tag = os.environ["GITHUB_REF_NAME"]
+          semver = re.compile(
+              r"^v(0|[1-9][0-9]*)\."
+              r"(0|[1-9][0-9]*)\."
+              r"(0|[1-9][0-9]*)"
+              r"(?:-((?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
+              r"(?:\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?"
+              r"(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$"
+          )
+          if not semver.fullmatch(tag):
+              print(f"tag {tag} is not a valid v-prefixed SemVer version", file=sys.stderr)
+              raise SystemExit(1)
+          PY
+
+      - name: Run tests
+        run: go test ./... -count=1
+
+      - name: Run go vet
+        run: go vet ./...
+
+  build:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            archive: tar.gz
+          - goos: linux
+            goarch: arm64
+            archive: tar.gz
+          - goos: darwin
+            goarch: amd64
+            archive: tar.gz
+          - goos: darwin
+            goarch: arm64
+            archive: tar.gz
+          - goos: windows
+            goarch: amd64
+            archive: zip
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build and package
+        shell: bash
+        env:
+          TARGET_GOOS: ${{ matrix.goos }}
+          TARGET_GOARCH: ${{ matrix.goarch }}
+          ARCHIVE_FORMAT: ${{ matrix.archive }}
+        run: |
+          set -euo pipefail
+
+          version="${GITHUB_REF_NAME#v}"
+          package_name="${BINARY_NAME}_${version}_${TARGET_GOOS}_${TARGET_GOARCH}"
+          package_dir="dist/${package_name}"
+          executable="${BINARY_NAME}"
+          if [[ "${TARGET_GOOS}" == "windows" ]]; then
+            executable="${executable}.exe"
+          fi
+
+          mkdir -p "${package_dir}/configs"
+          CGO_ENABLED=0 GOOS="${TARGET_GOOS}" GOARCH="${TARGET_GOARCH}" \
+            go build -trimpath -ldflags="-s -w" -o "${package_dir}/${executable}" ./cmd/turntf-port-forward
+          cp README.md "${package_dir}/"
+          cp configs/server.example.yaml configs/client.example.yaml "${package_dir}/configs/"
+
+          if [[ "${ARCHIVE_FORMAT}" == "zip" ]]; then
+            (cd dist && zip -qr "${package_name}.zip" "${package_name}")
+          else
+            tar -C dist -czf "dist/${package_name}.tar.gz" "${package_name}"
+          fi
+
+      - name: Upload release asset
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/*.${{ matrix.archive }}
+          if-no-files-found: error
+          retention-days: 1
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download release assets
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: dist
+          pattern: release-*
+          merge-multiple: true
+
+      - name: Generate checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum turntf-port-forward_* > SHA256SUMS
+
+      - name: Detect prerelease tag
+        id: release_metadata
+        shell: bash
+        run: |
+          version_without_build="${GITHUB_REF_NAME%%+*}"
+          if [[ "${version_without_build}" == *-* ]]; then
+            echo "prerelease=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "prerelease=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          generate_release_notes: true
+          prerelease: ${{ steps.release_metadata.outputs.prerelease }}
+          fail_on_unmatched_files: true
+          files: dist/*

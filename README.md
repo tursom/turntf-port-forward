@@ -17,6 +17,17 @@
 go build -o turntf-port-forward ./cmd/turntf-port-forward
 ```
 
+## 发布
+
+GitHub Actions 会在推送符合 SemVer 的 `v*` tag 后自动创建 GitHub Release。首次发布前，必须先把发布工作流提交并推送到默认分支，再创建指向该提交或后续提交的 tag：
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+稳定版本使用 `vMAJOR.MINOR.PATCH`，例如 `v1.0.0`；`v1.0.0-rc.1` 等预发布 tag 会创建 prerelease。每个 Release 提供 Linux amd64/arm64、macOS amd64/arm64 和 Windows amd64 压缩包。压缩包包含二进制、README 和两份示例配置，并附带统一的 `SHA256SUMS`。
+
 ## 配置
 
 生成示例配置：
