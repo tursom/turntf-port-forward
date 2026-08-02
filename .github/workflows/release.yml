@@ -19,6 +19,8 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    outputs:
+      prerelease: ${{ steps.release_metadata.outputs.prerelease }}
 
     steps:
       - name: Checkout repository
@@ -30,26 +32,12 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Validate release tag
-        run: |
-          python3 - <<'PY'
-          import os
-          import re
-          import sys
+      - name: Resolve release metadata
+        id: release_metadata
+        run: python3 scripts/release_metadata.py "${GITHUB_REF_NAME}" >> "${GITHUB_OUTPUT}"
 
-          tag = os.environ["GITHUB_REF_NAME"]
-          semver = re.compile(
-              r"^v(0|[1-9][0-9]*)\."
-              r"(0|[1-9][0-9]*)\."
-              r"(0|[1-9][0-9]*)"
-              r"(?:-((?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
-              r"(?:\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?"
-              r"(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$"
-          )
-          if not semver.fullmatch(tag):
-              print(f"tag {tag} is not a valid v-prefixed SemVer version", file=sys.stderr)
-              raise SystemExit(1)
-          PY
+      - name: Test release metadata
+        run: python3 -m unittest scripts/release_metadata_test.py
 
       - name: Run tests
         run: go test ./... -count=1
@@ -129,7 +117,7 @@ jobs:
           retention-days: 1
 
   release:
-    needs: build
+    needs: [verify, build]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -150,21 +138,10 @@ jobs:
           cd dist
           sha256sum turntf-port-forward_* > SHA256SUMS
 
-      - name: Detect prerelease tag
-        id: release_metadata
-        shell: bash
-        run: |
-          version_without_build="${GITHUB_REF_NAME%%+*}"
-          if [[ "${version_without_build}" == *-* ]]; then
-            echo "prerelease=true" >> "${GITHUB_OUTPUT}"
-          else
-            echo "prerelease=false" >> "${GITHUB_OUTPUT}"
-          fi
-
       - name: Create GitHub release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           generate_release_notes: true
-          prerelease: ${{ steps.release_metadata.outputs.prerelease }}
+          prerelease: ${{ needs.verify.outputs.prerelease }}
           fail_on_unmatched_files: true
           files: dist/*

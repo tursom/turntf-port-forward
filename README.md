@@ -17,6 +17,12 @@
 go build -o turntf-port-forward ./cmd/turntf-port-forward
 ```
 
+也可以构建容器镜像：
+
+```bash
+docker build -t turntf-port-forward:local .
+```
+
 ## 发布
 
 GitHub Actions 会在推送符合 SemVer 的 `v*` tag 后自动创建 GitHub Release。首次发布前，必须先把发布工作流提交并推送到默认分支，再创建指向该提交或后续提交的 tag：
@@ -27,6 +33,10 @@ git push origin v1.0.0
 ```
 
 稳定版本使用 `vMAJOR.MINOR.PATCH`，例如 `v1.0.0`；`v1.0.0-rc.1` 等预发布 tag 会创建 prerelease。每个 Release 提供 Linux amd64/arm64、macOS amd64/arm64 和 Windows amd64 压缩包。压缩包包含二进制、README 和两份示例配置，并附带统一的 `SHA256SUMS`。
+
+同一 tag 还会发布 `linux/amd64`、`linux/arm64` 多架构镜像到 `ghcr.io/tursom/turntf-port-forward`。稳定版会生成完整版本、主次版本、主版本和 `latest` 标签；预发布版只生成完整版本标签。SemVer build metadata 的 `+` 在镜像标签中转换为 `_`，例如 `v1.0.0+build.4` 对应 `1.0.0_build.4`。推送 `master` 时会更新 `master` 和 `sha-<12 位提交前缀>` 标签。
+
+首次发布镜像后，需要仓库 Owner 在 GitHub Package settings 中将 Package visibility 手动设置为 Public。
 
 ## 配置
 
@@ -63,6 +73,24 @@ git push origin v1.0.0
 ```
 
 收到 `SIGINT` 或 `SIGTERM` 后，程序停止监听并关闭活动连接。
+
+容器使用同一个镜像运行两种模式，并通过只读挂载提供配置：
+
+```bash
+docker run --rm \
+  -v "$PWD/server.yaml:/etc/turntf-port-forward/server.yaml:ro" \
+  ghcr.io/tursom/turntf-port-forward:latest \
+  server -c /etc/turntf-port-forward/server.yaml
+
+docker run --rm \
+  -p 127.0.0.1:8080:8080/tcp \
+  -p 127.0.0.1:5353:5353/udp \
+  -v "$PWD/client.yaml:/etc/turntf-port-forward/client.yaml:ro" \
+  ghcr.io/tursom/turntf-port-forward:latest \
+  client -c /etc/turntf-port-forward/client.yaml
+```
+
+客户端配置中的容器监听地址必须使用 `0.0.0.0`，再分别通过 `/tcp` 和 `/udp` 端口映射暴露给主机。Linux 也可以使用 `--network host`，此时无需 `-p`，监听地址和端口直接位于主机网络命名空间。
 
 ## 测试
 

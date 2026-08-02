@@ -1,0 +1,109 @@
+name: docker-publish
+
+on:
+  push:
+    branches:
+      - master
+    tags:
+      - "v*"
+
+concurrency:
+  group: docker-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  GOWORK: "off"
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Validate release tag
+        if: github.ref_type == 'tag'
+        run: python3 scripts/release_metadata.py "${GITHUB_REF_NAME}" > /dev/null
+
+      - name: Test release metadata
+        run: python3 -m unittest scripts/release_metadata_test.py
+
+      - name: Run tests
+        run: go test ./... -count=1
+
+      - name: Run go vet
+        run: go vet ./...
+
+  publish:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Resolve image name
+        id: image
+        shell: bash
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "${GITHUB_OUTPUT}"
+
+      - name: Resolve image tags
+        id: release
+        shell: bash
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
+        run: |
+          if [[ "${REF_TYPE}" == "tag" ]]; then
+            python3 scripts/release_metadata.py "${REF_NAME}" >> "${GITHUB_OUTPUT}"
+          else
+            python3 scripts/release_metadata.py --branch "${REF_NAME}" "${GITHUB_SHA}" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Extract image metadata
+        id: metadata
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
+        with:
+          images: ${{ steps.image.outputs.name }}
+          tags: |
+            type=raw,value=${{ steps.release.outputs.exact }}
+            type=raw,value=${{ steps.release.outputs.commit }},enable=${{ steps.release.outputs.commit != '' }}
+            type=raw,value=${{ steps.release.outputs.major_minor }},enable=${{ steps.release.outputs.major_minor != '' }}
+            type=raw,value=${{ steps.release.outputs.major }},enable=${{ steps.release.outputs.major != '' }}
+            type=raw,value=${{ steps.release.outputs.latest }},enable=${{ steps.release.outputs.latest != '' }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.metadata.outputs.tags }}
+          labels: ${{ steps.metadata.outputs.labels }}
+          provenance: false
+          sbom: false
